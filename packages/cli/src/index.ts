@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { prompt, FileStorage, convertToATIF, cleanupBackgroundProcesses } from 'open-agent-sdk';
+import { resolveCodexCliAuth } from './codex-auth';
 
 const args = process.argv.slice(2);
 type CleanupBackgroundMode = 'never' | 'on-error' | 'always';
@@ -26,7 +27,8 @@ function resolveCleanupBackgroundMode(): CleanupBackgroundMode {
 
 const instruction = getFlag('-p');
 const model = getFlag('--model') ?? process.env.OAS_MODEL;
-const provider = getFlag('--provider') as 'openai' | 'google' | 'anthropic' | undefined;
+const provider = (getFlag('--provider') ?? process.env.OAS_PROVIDER) as
+  'openai' | 'google' | 'anthropic' | 'codex' | 'openai-codex' | undefined;
 const outputFormat = getFlag('--output-format') ?? 'text';
 const maxTurns = parseInt(getFlag('--max-turns') ?? '50', 10);
 const cwd = getFlag('--cwd') ?? process.cwd();
@@ -35,9 +37,10 @@ const saveTrajectory = getFlag('--save-trajectory');
 const sessionDir = getFlag('--session-dir');
 const noPersist = args.includes('--no-persist');
 const cleanupBackgroundMode = resolveCleanupBackgroundMode();
+const codexCliAuth = resolveCodexCliAuth(args);
 
 if (!instruction) {
-  console.error('Usage: oas -p <instruction> [--model <model>] [--provider openai|google|anthropic] [--output-format text|json] [--max-turns <n>] [--cwd <path>] [--save-trajectory <path>] [--session-dir <path>] [--cleanup-background never|on-error|always] [--no-persist]');
+  console.error('Usage: oas -p <instruction> [--model <model>] [--provider openai|google|anthropic|codex] [--output-format text|json] [--max-turns <n>] [--cwd <path>] [--save-trajectory <path>] [--session-dir <path>] [--codex-api-key <token>] [--codex-oauth-json <json>] [--codex-interactive-login] [--codex-auth-path <path>] [--codex-credentials-path <path>] [--cleanup-background never|on-error|always] [--no-persist]');
   process.exit(1);
 }
 
@@ -69,6 +72,12 @@ async function main() {
     const result = await prompt(instruction!, {
       model: model!,
       provider,
+      ...(provider === 'codex' || provider === 'openai-codex'
+        ? {
+            ...(codexCliAuth.apiKey ? { apiKey: codexCliAuth.apiKey } : {}),
+            ...(codexCliAuth.codexOAuth ? { codexOAuth: codexCliAuth.codexOAuth } : {}),
+          }
+        : {}),
       maxTurns,
       systemPrompt: getSystemPrompt(cwd),
       allowedTools: ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'BashOutput', 'KillBash'],
