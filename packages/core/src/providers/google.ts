@@ -12,6 +12,41 @@ interface VercelTool {
   inputSchema: ReturnType<typeof jsonSchema>;
 }
 
+const URL_CANDIDATE_PATTERN = /https?:\/\/[^\s<>"'`]+/gi;
+const TRAILING_URL_PUNCTUATION_PATTERN = /[),.!?;:]+$/;
+const YOUTUBE_HOSTNAMES = new Set([
+  'youtube.com',
+  'www.youtube.com',
+  'm.youtube.com',
+  'music.youtube.com',
+  'youtu.be',
+  'www.youtu.be',
+]);
+
+function extractFirstYouTubeUrl(content: string): string | undefined {
+  const candidates = content.match(URL_CANDIDATE_PATTERN);
+  if (!candidates) {
+    return undefined;
+  }
+
+  for (const candidate of candidates) {
+    const normalizedUrl = candidate.replace(TRAILING_URL_PUNCTUATION_PATTERN, '');
+
+    try {
+      const parsedUrl = new URL(normalizedUrl);
+      const hostname = parsedUrl.hostname.toLowerCase();
+
+      if (YOUTUBE_HOSTNAMES.has(hostname)) {
+        return normalizedUrl;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return undefined;
+}
+
 export interface GoogleConfig extends ProviderConfig {
   // Google-specific config
 }
@@ -188,8 +223,22 @@ export class GoogleProvider extends LLMProvider {
       .filter((msg) => msg.type !== 'system')
       .map((msg) => {
         switch (msg.type) {
-          case 'user':
-            return { role: 'user', content: msg.message.content };
+          case 'user': {
+            const textContent = msg.message.content;
+            const youtubeUrl = extractFirstYouTubeUrl(textContent);
+
+            if (!youtubeUrl) {
+              return { role: 'user', content: textContent };
+            }
+
+            return {
+              role: 'user',
+              content: [
+                { type: 'text', text: textContent },
+                { type: 'file', data: youtubeUrl, mimeType: 'video/youtube' },
+              ],
+            } as unknown as ModelMessage;
+          }
           case 'assistant': {
             const toolCalls = msg.message.tool_calls ?? [];
             const text = msg.message.content
