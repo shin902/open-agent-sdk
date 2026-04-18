@@ -12,6 +12,42 @@ interface VercelTool {
   inputSchema: ReturnType<typeof jsonSchema>;
 }
 
+const URL_CANDIDATE_PATTERN = /https?:\/\/[^\s<>"'`]+/gi;
+const TRAILING_URL_PUNCTUATION_PATTERN = /[),.!?;:。、，！？；：）】］｝〕〉》」』]+$/u;
+const YOUTUBE_HOSTNAMES = new Set([
+  'youtube.com',
+  'www.youtube.com',
+  'm.youtube.com',
+  'music.youtube.com',
+  'youtu.be',
+  'www.youtu.be',
+]);
+
+function extractFirstYouTubeUrl(content: string): URL | undefined {
+  const candidatePattern = new RegExp(URL_CANDIDATE_PATTERN.source, URL_CANDIDATE_PATTERN.flags);
+  let candidateMatch = candidatePattern.exec(content);
+
+  while (candidateMatch) {
+    const normalizedUrl = candidateMatch[0].replace(TRAILING_URL_PUNCTUATION_PATTERN, '');
+
+    try {
+      const parsedUrl = new URL(normalizedUrl);
+      const hostname = parsedUrl.hostname.toLowerCase();
+
+      if (YOUTUBE_HOSTNAMES.has(hostname)) {
+        return parsedUrl;
+      }
+    } catch {
+      // Skip malformed URL candidates and continue scanning.
+    }
+
+    candidateMatch = candidatePattern.exec(content);
+  }
+
+  return undefined;
+}
+
+
 export interface GoogleConfig extends ProviderConfig {
   // Google-specific config
 }
@@ -188,8 +224,22 @@ export class GoogleProvider extends LLMProvider {
       .filter((msg) => msg.type !== 'system')
       .map((msg) => {
         switch (msg.type) {
-          case 'user':
-            return { role: 'user', content: msg.message.content };
+          case 'user': {
+            const textContent = msg.message.content;
+            const youtubeUrl = extractFirstYouTubeUrl(textContent);
+
+            if (!youtubeUrl) {
+              return { role: 'user', content: textContent };
+            }
+
+            return {
+              role: 'user',
+              content: [
+                { type: 'text', text: textContent },
+                { type: 'file', data: youtubeUrl, mimeType: 'video/youtube' },
+              ],
+            } as unknown as ModelMessage;
+          }
           case 'assistant': {
             const toolCalls = msg.message.tool_calls ?? [];
             const text = msg.message.content
