@@ -99,8 +99,6 @@ function buildAssistantHistoryMessage(message: Extract<SDKMessage, { type: 'assi
 }
 
 export interface CodexConfig extends ProviderConfig {
-  /** Optional API base URL override (for proxies or compatible Codex endpoints) */
-  baseURL?: string;
   codexOAuth?: CodexOAuthOptions;
   transport?: 'sse' | 'websocket' | 'auto';
 }
