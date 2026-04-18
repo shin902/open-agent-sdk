@@ -90,9 +90,9 @@ describe('GoogleProvider chat', () => {
     expect((firstPartData as URL).toString()).toBe('https://youtu.be/firstVideo123');
   });
 
-  test('strips full-width punctuation after YouTube URL', async () => {
+  test('strips full-width punctuation immediately after a YouTube URL', async () => {
     const provider = new GoogleProvider({ apiKey: 'test-key', model: 'gemini-2.5-flash' });
-    const prompt = 'この動画を見てください https://youtu.be/fullWidthPunc123。';
+    const prompt = 'この動画を見て https://youtu.be/dQw4w9WgXcQ。';
     const messages = [createUserMessage(prompt, 'session-1', 'user-msg-4')];
 
     await runChat(provider, messages);
@@ -107,7 +107,34 @@ describe('GoogleProvider chat', () => {
 
     const filePartData = (content as Array<{ data?: unknown }>)[1]?.data;
     expect(filePartData).toBeInstanceOf(URL);
-    expect((filePartData as URL).toString()).toBe('https://youtu.be/fullWidthPunc123');
+    expect((filePartData as URL).toString()).toBe('https://youtu.be/dQw4w9WgXcQ');
+  });
+
+  test('strips common full-width closing brackets after a YouTube URL', async () => {
+    const suffixes = ['）', '】', '」'];
+
+    for (const suffix of suffixes) {
+      mockStreamText.mockReset();
+      mockStreamText.mockImplementation(createMockTextStreamResult);
+
+      const provider = new GoogleProvider({ apiKey: 'test-key', model: 'gemini-2.5-flash' });
+      const prompt = `確認して https://youtu.be/dQw4w9WgXcQ${suffix}`;
+      const messages = [createUserMessage(prompt, 'session-1', `user-msg-5-${suffix}`)];
+
+      await runChat(provider, messages);
+
+      const capturedMessages = getCapturedMessages();
+      expect(capturedMessages).toHaveLength(1);
+
+      const content = (capturedMessages[0] as { content: unknown }).content as
+        | Array<{ data?: unknown }>
+        | string;
+      expect(Array.isArray(content)).toBe(true);
+
+      const filePartData = (content as Array<{ data?: unknown }>)[1]?.data;
+      expect(filePartData).toBeInstanceOf(URL);
+      expect((filePartData as URL).toString()).toBe('https://youtu.be/dQw4w9WgXcQ');
+    }
   });
 
   test('keeps text-only payload when no YouTube URL is present', async () => {

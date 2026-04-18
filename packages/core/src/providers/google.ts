@@ -13,28 +13,7 @@ interface VercelTool {
 }
 
 const URL_CANDIDATE_PATTERN = /https?:\/\/[^\s<>"'`]+/gi;
-const TRAILING_URL_DELIMITERS = new Set([
-  ')',
-  ',',
-  '.',
-  '!',
-  '?',
-  ';',
-  ':',
-  ']',
-  '}',
-  '。',
-  '、',
-  '．',
-  '，',
-  '！',
-  '？',
-  '：',
-  '；',
-  '）',
-  '］',
-  '｝',
-]);
+const TRAILING_URL_PUNCTUATION_PATTERN = /[),.!?;:。、，！？；：）】］｝〕〉》」』]+$/u;
 const YOUTUBE_HOSTNAMES = new Set([
   'youtube.com',
   'www.youtube.com',
@@ -49,7 +28,7 @@ function extractFirstYouTubeUrl(content: string): URL | undefined {
   let candidateMatch = candidatePattern.exec(content);
 
   while (candidateMatch) {
-    const normalizedUrl = stripTrailingUrlDelimiters(candidateMatch[0]);
+    const normalizedUrl = candidateMatch[0].replace(TRAILING_URL_PUNCTUATION_PATTERN, '');
 
     try {
       const parsedUrl = new URL(normalizedUrl);
@@ -68,14 +47,6 @@ function extractFirstYouTubeUrl(content: string): URL | undefined {
   return undefined;
 }
 
-function stripTrailingUrlDelimiters(candidate: string): string {
-  let end = candidate.length;
-  while (end > 0 && TRAILING_URL_DELIMITERS.has(candidate[end - 1])) {
-    end -= 1;
-  }
-
-  return candidate.slice(0, end);
-}
 
 export interface GoogleConfig extends ProviderConfig {
   // Google-specific config
