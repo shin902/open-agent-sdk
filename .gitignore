@@ -75,3 +75,8 @@ packages/core/open-agent-sdk*.tgz
 .next/
 .next-dev/
 .next-dev.bad-*/
+
+
+
+
+.ai/
