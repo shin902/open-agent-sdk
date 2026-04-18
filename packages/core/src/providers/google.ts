@@ -23,25 +23,25 @@ const YOUTUBE_HOSTNAMES = new Set([
   'www.youtu.be',
 ]);
 
-function extractFirstYouTubeUrl(content: string): string | undefined {
-  const candidates = content.match(URL_CANDIDATE_PATTERN);
-  if (!candidates) {
-    return undefined;
-  }
+function extractFirstYouTubeUrl(content: string): URL | undefined {
+  const candidatePattern = new RegExp(URL_CANDIDATE_PATTERN.source, URL_CANDIDATE_PATTERN.flags);
+  let candidateMatch = candidatePattern.exec(content);
 
-  for (const candidate of candidates) {
-    const normalizedUrl = candidate.replace(TRAILING_URL_PUNCTUATION_PATTERN, '');
+  while (candidateMatch) {
+    const normalizedUrl = candidateMatch[0].replace(TRAILING_URL_PUNCTUATION_PATTERN, '');
 
     try {
       const parsedUrl = new URL(normalizedUrl);
       const hostname = parsedUrl.hostname.toLowerCase();
 
       if (YOUTUBE_HOSTNAMES.has(hostname)) {
-        return normalizedUrl;
+        return parsedUrl;
       }
     } catch {
-      continue;
+      // Skip malformed URL candidates and continue scanning.
     }
+
+    candidateMatch = candidatePattern.exec(content);
   }
 
   return undefined;
@@ -234,8 +234,8 @@ export class GoogleProvider extends LLMProvider {
             return {
               role: 'user',
               content: [
-                { type: 'text', text: textContent },
                 { type: 'file', data: youtubeUrl, mimeType: 'video/youtube' },
+                { type: 'text', text: textContent },
               ],
             } as unknown as ModelMessage;
           }
