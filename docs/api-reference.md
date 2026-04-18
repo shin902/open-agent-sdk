@@ -425,6 +425,7 @@ new CodexProvider(config: CodexConfig)
 |----------|------|----------|-------------|
 | `model` | `string` | ✅ | Codex model identifier |
 | `apiKey` | `string` | | Optional explicit short-lived token. Usually omitted |
+| `baseURL` | `string` | | Optional Codex API base URL override (for proxies/compatible endpoints) |
 | `codexOAuth` | `CodexOAuthOptions` | | OAuth config. Defaults to importing from `~/.codex/auth.json` |
 | `transport` | `'sse' \| 'websocket' \| 'auto'` | | Codex transport. Default: `sse` |
 

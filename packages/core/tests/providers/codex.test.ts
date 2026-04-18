@@ -4,7 +4,11 @@ import { CodexProvider } from '../../src/providers/codex';
 import type { ToolDefinition } from '../../src/types/tools';
 
 const mockStream = mock();
-const mockGetModel = mock((provider: string, model: string) => ({ provider, model }));
+const mockGetModel = mock((provider: string, model: string) => ({
+  provider,
+  model,
+  baseUrl: 'https://api.openai.com/v1',
+}));
 
 mock.module('@mariozechner/pi-ai', () => ({
   stream: mockStream,
@@ -76,6 +80,19 @@ describe('CodexProvider', () => {
     }
 
     expect(mockGetModel).toHaveBeenCalledWith('openai-codex', 'gpt-5.4');
+    expect(mockStream).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'openai-codex',
+        model: 'gpt-5.4',
+        baseUrl: 'https://api.openai.com/v1',
+      }),
+      expect.any(Object),
+      expect.objectContaining({
+        apiKey: 'oauth-access-token',
+        transport: 'sse',
+        sessionId: 'session-1',
+      })
+    );
     expect(chunks).toEqual([
       { type: 'content', delta: 'Hello' },
       {
@@ -95,5 +112,47 @@ describe('CodexProvider', () => {
       },
       { type: 'done' },
     ]);
+  });
+
+  test('overrides model baseUrl when baseURL config is provided', async () => {
+    mockStream.mockImplementation(() => (async function* () {
+      yield {
+        type: 'done',
+        message: {
+          usage: {
+            input: 1,
+            output: 1,
+          },
+        },
+      } as any;
+    })());
+
+    const provider = new CodexProvider({
+      apiKey: 'oauth-access-token',
+      model: 'gpt-5.4',
+      baseURL: 'https://proxy.example.com/v1',
+    });
+
+    const messages = [{
+      type: 'user' as const,
+      uuid: 'msg-1',
+      session_id: 'session-1',
+      message: { role: 'user' as const, content: 'Reply with hello.' },
+      parent_tool_use_id: null,
+    }];
+
+    for await (const _chunk of provider.chat(messages)) {
+      // Drain stream.
+    }
+
+    expect(mockGetModel).toHaveBeenCalledWith('openai-codex', 'gpt-5.4');
+    expect(mockStream).toHaveBeenCalledTimes(1);
+    expect(mockStream.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        provider: 'openai-codex',
+        model: 'gpt-5.4',
+        baseUrl: 'https://proxy.example.com/v1',
+      })
+    );
   });
 });
