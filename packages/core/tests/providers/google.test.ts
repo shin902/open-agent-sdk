@@ -40,7 +40,7 @@ describe('GoogleProvider chat', () => {
     mockStreamText.mockImplementation(createMockTextStreamResult);
   });
 
-  test('sends YouTube URL as URL object and places file before text', async () => {
+  test('sends YouTube URL as URL object and appends file after text', async () => {
     const provider = new GoogleProvider({ apiKey: 'test-key', model: 'gemini-2.5-flash' });
     const prompt = 'この動画を要約して https://youtube.com/watch?v=dQw4w9WgXcQ';
     const messages = [createUserMessage(prompt, 'session-1', 'user-msg-1')];
@@ -63,10 +63,10 @@ describe('GoogleProvider chat', () => {
       text?: string;
     }>;
 
-    expect(contentParts[0]).toMatchObject({ type: 'file', mimeType: 'video/youtube' });
-    expect(contentParts[0]?.data).toBeInstanceOf(URL);
-    expect((contentParts[0]?.data as URL).toString()).toBe('https://youtube.com/watch?v=dQw4w9WgXcQ');
-    expect(contentParts[1]).toEqual({ type: 'text', text: prompt });
+    expect(contentParts[0]).toEqual({ type: 'text', text: prompt });
+    expect(contentParts[1]).toMatchObject({ type: 'file', mimeType: 'video/youtube' });
+    expect(contentParts[1]?.data).toBeInstanceOf(URL);
+    expect((contentParts[1]?.data as URL).toString()).toBe('https://youtube.com/watch?v=dQw4w9WgXcQ');
   });
 
   test('uses only the first YouTube URL when multiple URLs exist', async () => {
@@ -85,9 +85,29 @@ describe('GoogleProvider chat', () => {
       | string;
     expect(Array.isArray(content)).toBe(true);
 
-    const firstPartData = (content as Array<{ data?: unknown }>)[0]?.data;
+    const firstPartData = (content as Array<{ data?: unknown }>)[1]?.data;
     expect(firstPartData).toBeInstanceOf(URL);
     expect((firstPartData as URL).toString()).toBe('https://youtu.be/firstVideo123');
+  });
+
+  test('strips full-width punctuation after YouTube URL', async () => {
+    const provider = new GoogleProvider({ apiKey: 'test-key', model: 'gemini-2.5-flash' });
+    const prompt = 'この動画を見てください https://youtu.be/fullWidthPunc123。';
+    const messages = [createUserMessage(prompt, 'session-1', 'user-msg-4')];
+
+    await runChat(provider, messages);
+
+    const capturedMessages = getCapturedMessages();
+    expect(capturedMessages).toHaveLength(1);
+
+    const content = (capturedMessages[0] as { content: unknown }).content as
+      | Array<{ data?: unknown }>
+      | string;
+    expect(Array.isArray(content)).toBe(true);
+
+    const filePartData = (content as Array<{ data?: unknown }>)[1]?.data;
+    expect(filePartData).toBeInstanceOf(URL);
+    expect((filePartData as URL).toString()).toBe('https://youtu.be/fullWidthPunc123');
   });
 
   test('keeps text-only payload when no YouTube URL is present', async () => {

@@ -13,7 +13,7 @@ interface VercelTool {
 }
 
 const URL_CANDIDATE_PATTERN = /https?:\/\/[^\s<>"'`]+/gi;
-const TRAILING_URL_PUNCTUATION_PATTERN = /[),.!?;:]+$/;
+const TRAILING_URL_PUNCTUATION_PATTERN = /[),.!?;:\]}。、．，！？：；）］｝]+$/u;
 const YOUTUBE_HOSTNAMES = new Set([
   'youtube.com',
   'www.youtube.com',
@@ -234,8 +234,8 @@ export class GoogleProvider extends LLMProvider {
             return {
               role: 'user',
               content: [
-                { type: 'file', data: youtubeUrl, mimeType: 'video/youtube' },
                 { type: 'text', text: textContent },
+                { type: 'file', data: youtubeUrl, mimeType: 'video/youtube' },
               ],
             } as unknown as ModelMessage;
           }
