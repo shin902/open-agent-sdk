@@ -135,13 +135,16 @@ export class CodexProvider extends LLMProvider {
         'openai-codex',
         this.config.model as Parameters<typeof getModel>[1]
       );
+      const requestModel = this.config.baseURL
+        ? { ...model, baseUrl: this.config.baseURL }
+        : model;
       const context: PiContext = {
         messages: this.convertMessages(messages),
         systemPrompt: options?.systemInstruction ?? DEFAULT_CODEX_SYSTEM_PROMPT,
         ...(tools?.length ? { tools: this.convertTools(tools) } : {}),
       };
 
-      const responseStream = stream(model, context, {
+      const responseStream = stream(requestModel, context, {
         apiKey: auth.apiKey,
         transport: this.transport,
         signal,

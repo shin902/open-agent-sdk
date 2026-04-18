@@ -116,6 +116,7 @@ function createProvider(options: {
     return new CodexProvider({
       apiKey: options.apiKey,
       model: options.model,
+      baseURL: options.baseURL,
       codexOAuth: options.codexOAuth,
     });
   }
