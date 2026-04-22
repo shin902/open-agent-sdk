@@ -29,4 +29,6 @@ export {
   type CreateSessionOptions,
   type ResumeSessionOptions,
   type ForkSessionOptions,
+  type NamedProviderConfig,
+  type FallbackProviderConfig,
 } from './factory';

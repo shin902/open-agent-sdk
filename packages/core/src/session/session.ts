@@ -96,7 +96,7 @@ export interface SessionOptions {
 export class Session {
   readonly id: string;
   readonly model: string;
-  readonly provider: string;
+  private _provider: string;
   readonly createdAt: number;
   readonly parentSessionId?: string;
   readonly forkedAt?: number;
@@ -115,7 +115,7 @@ export class Session {
   constructor(loop: ReActLoop, options: SessionOptions, storage?: SessionStorage) {
     this.id = options.id ?? generateUUID();
     this.model = options.model;
-    this.provider = options.provider;
+    this._provider = options.provider;
     this.createdAt = Date.now();
     this.updatedAt = this.createdAt;
     this.parentSessionId = options.parentSessionId;
@@ -131,6 +131,39 @@ export class Session {
 
     // Load skills asynchronously
     this.loadSkills();
+  }
+
+  get provider(): string {
+    return this._provider;
+  }
+
+  get currentProvider(): string {
+    return this._provider;
+  }
+
+  /**
+   * Synchronize provider name from ReActLoop callbacks.
+   * @internal
+   */
+  syncProviderFromLoop(providerName: string): void {
+    this._provider = providerName;
+  }
+
+  /**
+   * Switch active provider by logical name.
+   * Only allowed while session is idle or ready.
+   */
+  switchProvider(name: string): void {
+    if (this._state === SessionState.CLOSED) {
+      throw new SessionClosedError();
+    }
+
+    if (this._state !== SessionState.IDLE && this._state !== SessionState.READY) {
+      throw new SessionError('Cannot switch provider unless session is idle or ready');
+    }
+
+    this.loop.switchProvider(name);
+    this._provider = this.loop.getCurrentProviderName();
   }
 
   /**
