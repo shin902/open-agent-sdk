@@ -95,8 +95,8 @@ export interface SessionOptions {
  */
 export class Session {
   readonly id: string;
-  readonly model: string;
-  readonly provider: string;
+  private _model: string;
+  private _provider: string;
   readonly createdAt: number;
   readonly parentSessionId?: string;
   readonly forkedAt?: number;
@@ -106,6 +106,7 @@ export class Session {
   private messages: SDKMessage[];
   private isStreaming: boolean;
   private storage?: SessionStorage;
+  private persistedOptions?: SessionData['options'];
   private updatedAt: number;
   private skillCatalog: SkillCatalogItem[];
   private skillRegistry?: SkillRegistry;
@@ -114,8 +115,8 @@ export class Session {
 
   constructor(loop: ReActLoop, options: SessionOptions, storage?: SessionStorage) {
     this.id = options.id ?? generateUUID();
-    this.model = options.model;
-    this.provider = options.provider;
+    this._model = options.model;
+    this._provider = options.provider;
     this.createdAt = Date.now();
     this.updatedAt = this.createdAt;
     this.parentSessionId = options.parentSessionId;
@@ -125,12 +126,54 @@ export class Session {
     this._state = SessionState.IDLE;
     this.isStreaming = false;
     this.storage = storage;
+    this.persistedOptions = undefined;
     this.skillCatalog = [];
     this.skillRegistry = undefined;
     this.skillsLoaded = false;
 
     // Load skills asynchronously
     this.loadSkills();
+  }
+
+  get provider(): string {
+    return this._provider;
+  }
+
+  get model(): string {
+    return this._model;
+  }
+
+  get currentProvider(): string {
+    return this._provider;
+  }
+
+  /**
+   * Synchronize provider name from ReActLoop callbacks.
+   * @internal
+   */
+  syncProviderFromLoop(providerName: string): void {
+    this._provider = providerName;
+    const currentModel = this.loop.getCurrentModel();
+    if (typeof currentModel === 'string' && currentModel.length > 0) {
+      this._model = currentModel;
+    }
+  }
+
+  /**
+   * Switch active provider by logical name.
+   * Only allowed while session is idle or ready.
+   */
+  switchProvider(name: string): void {
+    if (this._state === SessionState.CLOSED) {
+      throw new SessionClosedError();
+    }
+
+    if (this._state !== SessionState.IDLE && this._state !== SessionState.READY) {
+      throw new SessionError('Cannot switch provider unless session is idle or ready');
+    }
+
+    this.loop.switchProvider(name);
+    this.syncProviderFromLoop(this.loop.getCurrentProviderName());
   }
 
   /**
@@ -144,6 +187,14 @@ export class Session {
     this.skillCatalog = registry.getAll();
     this.skillsLoaded = true;
     logger.debug('[Session] Initialized with pre-loaded skills:', this.skillCatalog.length);
+  }
+
+  /**
+   * Initialize persisted session options cache.
+   * @internal
+   */
+  initializePersistedOptions(options: SessionData['options']): void {
+    this.persistedOptions = { ...options };
   }
 
   /**
@@ -256,6 +307,7 @@ export class Session {
     (session as unknown as { messages: SDKMessage[] }).messages = [...data.messages];
     (session as unknown as { createdAt: number }).createdAt = data.createdAt;
     (session as unknown as { updatedAt: number }).updatedAt = data.updatedAt;
+    session.initializePersistedOptions(data.options);
 
     return session;
   }
@@ -271,6 +323,12 @@ export class Session {
 
     this.updatedAt = Date.now();
 
+    const mergedOptions = {
+      ...(this.persistedOptions ?? {}),
+      model: this.model,
+      provider: this.provider,
+    };
+
     const sessionData: SessionData = {
       id: this.id,
       model: this.model,
@@ -278,15 +336,13 @@ export class Session {
       createdAt: this.createdAt,
       updatedAt: this.updatedAt,
       messages: [...this.messages],
-      options: {
-        model: this.model,
-        provider: this.provider,
-      },
+      options: mergedOptions,
       parentSessionId: this.parentSessionId,
       forkedAt: this.forkedAt,
     };
 
     await this.storage.save(sessionData);
+    this.persistedOptions = mergedOptions;
   }
 
   /** Current state of the session */

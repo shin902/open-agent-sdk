@@ -30,6 +30,12 @@ export interface ToolContext {
   abortController?: AbortController;
   /** Provider for LLM operations (used by WebFetch and similar tools) */
   provider?: LLMProvider;
+  /** Named providers available in the current session context */
+  providers?: Record<string, LLMProvider>;
+  /** Logical name of the currently active provider */
+  currentProviderName?: string;
+  /** Fallback provider names in retry order */
+  fallbackProviders?: string[];
   /** Model identifier for LLM operations */
   model?: string;
 }

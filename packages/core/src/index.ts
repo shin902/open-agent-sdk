@@ -10,6 +10,7 @@ import type { OutputFormat } from './types/output-format';
 import type { CodexOAuthOptions } from './auth';
 import { InMemoryStorage, type SessionStorage } from './session/storage';
 import { createSession, resumeSession, forkSession } from './session/factory';
+import type { NamedProviderConfig, FallbackProviderConfig } from './session/factory';
 import type { Session } from './session/session';
 
 // Export permission system
@@ -28,12 +29,18 @@ export {
 } from './permissions';
 
 export interface PromptOptions {
-  /** Model identifier (e.g., 'gpt-4', 'gpt-4o', 'gemini-2.0-flash') */
-  model: string;
+  /** Model identifier (required when providers is not specified) */
+  model?: string;
   /** API key (defaults to OPENAI_API_KEY, GEMINI_API_KEY, or ANTHROPIC_API_KEY env var based on provider) */
   apiKey?: string;
   /** Provider to use: 'openai', 'google', 'anthropic', or 'codex' (auto-detected from model name if not specified) */
   provider?: 'openai' | 'google' | 'anthropic' | 'codex' | 'openai-codex';
+  /** Named provider map (takes precedence over top-level provider/model when specified) */
+  providers?: Record<string, NamedProviderConfig>;
+  /** Default provider name from providers map (defaults to the first key) */
+  defaultProvider?: string;
+  /** Ordered fallback providers tried before first content chunk is received */
+  fallbackProviders?: FallbackProviderConfig[];
   /** Base URL for API (supports custom endpoints like MiniMax). Authentication method is auto-detected based on the endpoint. */
   baseURL?: string;
   /** Codex OAuth configuration used when provider is 'codex' or when auto-detection selects it */
@@ -202,6 +209,9 @@ export async function prompt(
   session = await createSession({
     model: options.model,
     provider: options.provider,
+    providers: options.providers,
+    defaultProvider: options.defaultProvider,
+    fallbackProviders: options.fallbackProviders,
     apiKey: options.apiKey,
     baseURL: options.baseURL,
     codexOAuth: options.codexOAuth,
@@ -437,6 +447,8 @@ export {
   type CreateSessionOptions,
   type ResumeSessionOptions,
   type ForkSessionOptions,
+  type NamedProviderConfig,
+  type FallbackProviderConfig,
 } from './session';
 
 // Re-export logger

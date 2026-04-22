@@ -42,6 +42,12 @@ export interface SessionOptions {
   model: string;
   /** Provider identifier (optional, defaults to auto-detect) */
   provider?: string;
+  /** Named providers map (optional) */
+  providers?: Record<string, { provider: string; model: string }>;
+  /** Default provider name when providers map is used (optional) */
+  defaultProvider?: string;
+  /** Ordered fallback providers (optional) */
+  fallbackProviders?: Array<{ name?: string; provider: string; model: string }>;
   /** API key (optional, can use env var) */
   apiKey?: string;
   /** Base URL override (optional) */

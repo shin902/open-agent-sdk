@@ -13,7 +13,7 @@ echo "🔍 Running TypeScript check..."
 REPO_ROOT=$(git rev-parse --show-toplevel)
 
 # Run TypeScript check from repo root
-cd "$REPO_ROOT/packages/core" && npx tsc --noEmit
+cd "$REPO_ROOT/packages/core" && bun x tsc --noEmit
 
 if [ $? -ne 0 ]; then
   echo "❌ TypeScript check failed. Please fix errors before committing."

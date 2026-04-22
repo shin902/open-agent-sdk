@@ -9,6 +9,7 @@ import { runSubagent, type SubagentContext } from '../agent/subagent-runner';
 import { ToolRegistry } from './registry';
 import { HookManager } from '../hooks/manager';
 import { logger } from '../utils/logger';
+import type { LLMProvider } from '../providers/base';
 
 /**
  * Input for the Task tool
@@ -54,6 +55,12 @@ export interface TaskToolConfig {
   sessionId: string;
   /** Parent's model identifier */
   model: string;
+  /** Parent's active provider logical name */
+  providerName: string;
+  /** Parent providers keyed by logical name (optional) */
+  providers?: Record<string, LLMProvider>;
+  /** Parent fallback provider names (optional) */
+  fallbackProviders?: string[];
   /** Parent's max turns */
   maxTurns: number;
   /** Parent's permission mode */
@@ -123,6 +130,9 @@ export class TaskTool implements Tool<TaskInput, TaskOutput> {
       parentSessionId: this.config.sessionId,
       parentConfig: {
         model: this.config.model,
+        providerName: context.currentProviderName ?? this.config.providerName,
+        providers: context.providers ?? this.config.providers,
+        fallbackProviders: context.fallbackProviders ?? this.config.fallbackProviders,
         maxTurns: this.config.maxTurns,
         permissionMode: this.config.permissionMode,
       },
@@ -166,12 +176,67 @@ export function createTaskToolFromConfig(
   maxTurns: number,
   permissionMode: string,
   hookManager: HookManager,
-  toolRegistry: ToolRegistry
+  toolRegistry: ToolRegistry,
+  providers?: Record<string, LLMProvider>,
+  fallbackProviders?: string[]
+): TaskTool;
+export function createTaskToolFromConfig(
+  agents: AgentDefinitions,
+  sessionId: string,
+  model: string,
+  providerName: string,
+  maxTurns: number,
+  permissionMode: string,
+  hookManager: HookManager,
+  toolRegistry: ToolRegistry,
+  providers?: Record<string, LLMProvider>,
+  fallbackProviders?: string[]
+): TaskTool;
+export function createTaskToolFromConfig(
+  agents: AgentDefinitions,
+  sessionId: string,
+  model: string,
+  providerNameOrMaxTurns: string | number,
+  maxTurnsOrPermissionMode: number | string,
+  permissionModeOrHookManager: string | HookManager,
+  hookManagerOrToolRegistry: HookManager | ToolRegistry,
+  toolRegistryOrProviders?: ToolRegistry | Record<string, LLMProvider>,
+  providersOrFallbackProviders?: Record<string, LLMProvider> | string[],
+  fallbackProvidersArg?: string[]
 ): TaskTool {
+  let providerName: string;
+  let maxTurns: number;
+  let permissionMode: string;
+  let hookManager: HookManager;
+  let toolRegistry: ToolRegistry;
+  let providers: Record<string, LLMProvider> | undefined;
+  let fallbackProviders: string[] | undefined;
+
+  if (typeof providerNameOrMaxTurns === 'string') {
+    providerName = providerNameOrMaxTurns;
+    maxTurns = maxTurnsOrPermissionMode as number;
+    permissionMode = permissionModeOrHookManager as string;
+    hookManager = hookManagerOrToolRegistry as HookManager;
+    toolRegistry = toolRegistryOrProviders as ToolRegistry;
+    providers = providersOrFallbackProviders as Record<string, LLMProvider> | undefined;
+    fallbackProviders = fallbackProvidersArg;
+  } else {
+    maxTurns = providerNameOrMaxTurns;
+    permissionMode = maxTurnsOrPermissionMode as string;
+    hookManager = permissionModeOrHookManager as HookManager;
+    toolRegistry = hookManagerOrToolRegistry as ToolRegistry;
+    providers = toolRegistryOrProviders as Record<string, LLMProvider> | undefined;
+    fallbackProviders = providersOrFallbackProviders as string[] | undefined;
+    providerName = fallbackProviders?.[0] ?? Object.keys(providers ?? {})[0] ?? 'default';
+  }
+
   return new TaskTool({
     agents,
     sessionId,
     model,
+    providerName,
+    providers,
+    fallbackProviders,
     maxTurns,
     permissionMode,
     hookManager,
