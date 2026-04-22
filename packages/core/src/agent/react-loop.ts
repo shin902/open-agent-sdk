@@ -4,6 +4,7 @@
  */
 
 import type { LLMProvider, ChatOptions } from '../providers/base';
+import { FallbackLLMProvider } from '../providers/fallback';
 import type { ToolRegistry } from '../tools/registry';
 import type { Tool, ToolContext } from '../types/tools';
 import type { SkillRegistry } from '../skills/types';
@@ -69,6 +70,16 @@ export interface ReActLoopConfig {
   skillRegistry?: SkillRegistry;
   /** Output format for structured responses */
   outputFormat?: OutputFormat;
+  /** Logical name for the primary provider */
+  providerName?: string;
+  /** All providers available to this loop, keyed by logical name */
+  providers?: Map<string, LLMProvider>;
+  /** Providers that are allowed as explicit switch targets */
+  switchableProviders?: string[];
+  /** Fallback provider names in retry order */
+  fallbackProviders?: string[];
+  /** Callback invoked when the active provider changes */
+  onProviderChange?: (providerName: string) => void;
 }
 
 export interface ReActResult {
@@ -100,6 +111,11 @@ export class ReActLoop {
   private sessionId: string;
   private hookManager: HookManager;
   private permissionManager: PermissionManager;
+  private providerName: string;
+  private providers: Map<string, LLMProvider>;
+  private switchableProviders: Set<string>;
+  private fallbackProviders: string[];
+  private onProviderChange?: (providerName: string) => void;
 
   constructor(
     provider: LLMProvider,
@@ -121,8 +137,35 @@ export class ReActLoop {
       canUseTool: config.canUseTool,
       mcpServers: config.mcpServers,
       hooks: config.hooks,
+      autoCompactThreshold: config.autoCompactThreshold,
+      preserveRecentRounds: config.preserveRecentRounds,
+      skillRegistry: config.skillRegistry,
+      outputFormat: config.outputFormat,
+      providerName: config.providerName,
+      providers: config.providers,
+      switchableProviders: config.switchableProviders,
+      fallbackProviders: config.fallbackProviders,
+      onProviderChange: config.onProviderChange,
     };
     this.sessionId = sessionId ?? generateUUID();
+
+    this.providerName = config.providerName ?? this.inferProviderName(provider);
+    this.providers = config.providers ? new Map(config.providers) : new Map([[this.providerName, provider]]);
+
+    if (!this.providers.has(this.providerName)) {
+      this.providers.set(this.providerName, provider);
+    }
+
+    this.provider = this.providers.get(this.providerName) ?? provider;
+
+    const initialSwitchable = config.switchableProviders && config.switchableProviders.length > 0
+      ? config.switchableProviders
+      : [this.providerName];
+    this.switchableProviders = new Set(initialSwitchable);
+    this.switchableProviders.add(this.providerName);
+
+    this.fallbackProviders = (config.fallbackProviders ?? []).filter((name) => this.providers.has(name));
+    this.onProviderChange = config.onProviderChange;
 
     // Initialize HookManager
     if (config.hooks instanceof HookManager) {
@@ -139,6 +182,90 @@ export class ReActLoop {
       allowDangerouslySkipPermissions: config.allowDangerouslySkipPermissions ?? false,
       canUseTool: config.canUseTool,
     });
+  }
+
+  private inferProviderName(provider: LLMProvider): string {
+    return provider.constructor.name.toLowerCase().replace('provider', '');
+  }
+
+  private setActiveProvider(providerName: string): void {
+    const nextProvider = this.providers.get(providerName);
+    if (!nextProvider) {
+      return;
+    }
+
+    const changed = this.providerName !== providerName;
+    this.providerName = providerName;
+    this.provider = nextProvider;
+
+    if (changed) {
+      this.onProviderChange?.(providerName);
+    }
+  }
+
+  private buildToolContext(): ToolContext {
+    return {
+      cwd: this.config.cwd!,
+      env: this.config.env!,
+      abortController: this.config.abortController,
+      provider: this.provider,
+      providers: Object.fromEntries(this.providers.entries()),
+      currentProviderName: this.providerName,
+      model: this.provider.getModel(),
+    };
+  }
+
+  private createExecutionProvider(): LLMProvider {
+    const candidateNames = [
+      this.providerName,
+      ...this.fallbackProviders.filter((name) => name !== this.providerName),
+    ].filter((name, index, all) => all.indexOf(name) === index);
+
+    const candidates = candidateNames
+      .map((name) => {
+        const candidateProvider = this.providers.get(name);
+        if (!candidateProvider) {
+          return undefined;
+        }
+
+        return {
+          name,
+          provider: candidateProvider,
+        };
+      })
+      .filter((candidate): candidate is { name: string; provider: LLMProvider } => candidate !== undefined);
+
+    if (candidates.length <= 1) {
+      return this.provider;
+    }
+
+    return new FallbackLLMProvider({
+      candidates,
+      onProviderSelected: (providerName) => {
+        this.setActiveProvider(providerName);
+      },
+    });
+  }
+
+  getCurrentProviderName(): string {
+    return this.providerName;
+  }
+
+  getProviderNames(): string[] {
+    return Array.from(this.providers.keys());
+  }
+
+  switchProvider(providerName: string): void {
+    if (!this.switchableProviders.has(providerName)) {
+      throw new Error(`Provider "${providerName}" is not configured for switching.`);
+    }
+
+    const nextProvider = this.providers.get(providerName);
+    if (!nextProvider) {
+      throw new Error(`Provider "${providerName}" is not available.`);
+    }
+
+    this.setActiveProvider(providerName);
   }
 
   /**
@@ -158,7 +285,7 @@ export class ReActLoop {
       messages.push(
         createSystemMessage(
           this.provider.getModel(),
-          this.provider.constructor.name.toLowerCase().replace('provider', ''),
+          this.providerName,
           this.config.allowedTools ?? this.toolRegistry.getAll().map((t) => t.name),
           this.config.cwd ?? process.cwd(),
           this.sessionId,
@@ -198,13 +325,6 @@ export class ReActLoop {
         parameters: tool.parameters,
       },
     }));
-
-    const toolContext: ToolContext = {
-      cwd: this.config.cwd!,
-      env: this.config.env!,
-      abortController: this.config.abortController,
-      provider: this.provider,
-    };
 
     while (turnCount < this.config.maxTurns) {
       // Check for abort
@@ -294,6 +414,8 @@ export class ReActLoop {
       // Check if assistant wants to use tools
       const assistantToolCalls = assistantMessage.message.tool_calls;
       if (assistantToolCalls && assistantToolCalls.length > 0) {
+        const toolContext = this.buildToolContext();
+
         // Execute tools and add results
         for (const toolCall of assistantToolCalls) {
           const result = await this.executeTool(toolCall, availableTools, toolContext);
@@ -384,17 +506,18 @@ export class ReActLoop {
     );
     await this.hookManager.emit('UserPromptSubmit', userPromptSubmitInput, undefined);
 
-    // Check if history already has a system message (metadata)
-    const hasSystemInHistory = history.some((msg) => msg.type === 'system');
+    const historyWithoutInit = history.filter(
+      (msg) => !(msg.type === 'system' && 'subtype' in msg && msg.subtype === 'init')
+    );
 
     const messages: SDKMessage[] = [
-      // Add system message metadata if system prompt is configured and not already in history
+      // Add current system metadata snapshot for this turn
       // The actual system prompt content is passed via ChatOptions to the provider
-      ...(this.config.systemPrompt && !hasSystemInHistory
+      ...(this.config.systemPrompt
         ? [
             createSystemMessage(
               this.provider.getModel(),
-              this.provider.constructor.name.toLowerCase().replace('provider', ''),
+              this.providerName,
               this.config.allowedTools ?? this.toolRegistry.getAll().map((t) => t.name),
               this.config.cwd ?? process.cwd(),
               this.sessionId,
@@ -406,7 +529,7 @@ export class ReActLoop {
           ]
         : []),
       // Add history messages
-      ...history,
+      ...historyWithoutInit,
       // Add current user message
       createUserMessage(userPrompt, this.sessionId, generateUUID()),
     ];
@@ -430,13 +553,6 @@ export class ReActLoop {
         parameters: tool.parameters,
       },
     }));
-
-    const toolContext: ToolContext = {
-      cwd: this.config.cwd!,
-      env: this.config.env!,
-      abortController: this.config.abortController,
-      provider: this.provider,
-    };
 
     while (turnCount < this.config.maxTurns) {
       // Check for abort
@@ -515,6 +631,8 @@ export class ReActLoop {
       // Check if assistant wants to use tools
       const assistantToolCalls = assistantMessage.message.tool_calls;
       if (assistantToolCalls && assistantToolCalls.length > 0) {
+        const toolContext = this.buildToolContext();
+
         // Execute tools and add results
         for (const toolCall of assistantToolCalls) {
           const result = await this.executeTool(toolCall, availableTools, toolContext);
@@ -809,7 +927,8 @@ Generate a concise but comprehensive summary.`;
       systemInstruction: this.config.systemPrompt,
       outputSchema: this.config.outputFormat?.schema as Record<string, unknown> | undefined,
     };
-    const stream = this.provider.chat(messages, tools, this.config.abortController?.signal, chatOptions);
+    const executionProvider = this.createExecutionProvider();
+    const stream = executionProvider.chat(messages, tools, this.config.abortController?.signal, chatOptions);
 
     let content = '';
     const toolCalls: Map<string, ToolCall> = new Map();
