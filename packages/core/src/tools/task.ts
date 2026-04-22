@@ -130,8 +130,8 @@ export class TaskTool implements Tool<TaskInput, TaskOutput> {
       parentSessionId: this.config.sessionId,
       parentConfig: {
         model: this.config.model,
-        providerName: this.config.providerName,
-        providers: this.config.providers,
+        providerName: context.currentProviderName ?? this.config.providerName,
+        providers: context.providers ?? this.config.providers,
         fallbackProviders: this.config.fallbackProviders,
         maxTurns: this.config.maxTurns,
         permissionMode: this.config.permissionMode,
