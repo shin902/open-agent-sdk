@@ -653,6 +653,56 @@ export async function resumeSession(
 
   let sessionRef: Session | undefined;
 
+  const restoredProviders = new Map<string, typeof provider>();
+  const savedProviders = options?.providers ?? sessionData.options.providers;
+
+  const addSavedProviders = (providersValue: unknown) => {
+    if (!providersValue) return;
+
+    if (providersValue instanceof Map) {
+      for (const [providerName, providerInstance] of providersValue.entries()) {
+        if (typeof providerName === 'string' && providerInstance) {
+          restoredProviders.set(providerName, providerInstance as typeof provider);
+        }
+      }
+      return;
+    }
+
+    if (Array.isArray(providersValue)) {
+      for (const entry of providersValue) {
+        if (
+          Array.isArray(entry) &&
+          entry.length >= 2 &&
+          typeof entry[0] === 'string' &&
+          entry[1]
+        ) {
+          restoredProviders.set(entry[0], entry[1] as typeof provider);
+        }
+      }
+      return;
+    }
+
+    if (typeof providersValue === 'object') {
+      for (const [providerName, providerInstance] of Object.entries(providersValue as Record<string, unknown>)) {
+        if (providerInstance) {
+          restoredProviders.set(providerName, providerInstance as typeof provider);
+        }
+      }
+    }
+  };
+
+  addSavedProviders(savedProviders);
+  restoredProviders.set(logicalProviderName, provider);
+
+  const savedFallbackProviders = options?.fallbackProviders ?? sessionData.options.fallbackProviders;
+  const savedDefaultProvider = options?.defaultProvider ?? sessionData.options.defaultProvider;
+  const switchableProviders = Array.from(new Set([
+    ...restoredProviders.keys(),
+    ...(Array.isArray(savedFallbackProviders) ? savedFallbackProviders : []),
+    savedDefaultProvider,
+    logicalProviderName,
+  ].filter((providerName): providerName is string => typeof providerName === 'string' && providerName.length > 0)));
+
   // Create ReAct loop with saved options, overridden by new options
   // Pass the existing session ID so all messages share the same session_id
   const loop = new ReActLoop(provider, toolRegistry, {
@@ -669,8 +719,8 @@ export async function resumeSession(
     skillRegistry,
     outputFormat: sessionData.options.outputFormat,
     providerName: logicalProviderName,
-    providers: new Map([[logicalProviderName, provider]]),
-    switchableProviders: [logicalProviderName],
+    providers: restoredProviders,
+    switchableProviders,
     onProviderChange: (providerName) => {
       sessionRef?.syncProviderFromLoop(providerName);
     },
