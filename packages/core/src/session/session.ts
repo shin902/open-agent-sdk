@@ -106,6 +106,7 @@ export class Session {
   private messages: SDKMessage[];
   private isStreaming: boolean;
   private storage?: SessionStorage;
+  private persistedOptions?: SessionData['options'];
   private updatedAt: number;
   private skillCatalog: SkillCatalogItem[];
   private skillRegistry?: SkillRegistry;
@@ -125,6 +126,7 @@ export class Session {
     this._state = SessionState.IDLE;
     this.isStreaming = false;
     this.storage = storage;
+    this.persistedOptions = undefined;
     this.skillCatalog = [];
     this.skillRegistry = undefined;
     this.skillsLoaded = false;
@@ -185,6 +187,14 @@ export class Session {
     this.skillCatalog = registry.getAll();
     this.skillsLoaded = true;
     logger.debug('[Session] Initialized with pre-loaded skills:', this.skillCatalog.length);
+  }
+
+  /**
+   * Initialize persisted session options cache.
+   * @internal
+   */
+  initializePersistedOptions(options: SessionData['options']): void {
+    this.persistedOptions = { ...options };
   }
 
   /**
@@ -297,6 +307,7 @@ export class Session {
     (session as unknown as { messages: SDKMessage[] }).messages = [...data.messages];
     (session as unknown as { createdAt: number }).createdAt = data.createdAt;
     (session as unknown as { updatedAt: number }).updatedAt = data.updatedAt;
+    session.initializePersistedOptions(data.options);
 
     return session;
   }
@@ -312,9 +323,8 @@ export class Session {
 
     this.updatedAt = Date.now();
 
-    const existingSession = await this.storage.load(this.id);
     const mergedOptions = {
-      ...(existingSession?.options ?? {}),
+      ...(this.persistedOptions ?? {}),
       model: this.model,
       provider: this.provider,
     };
@@ -332,6 +342,7 @@ export class Session {
     };
 
     await this.storage.save(sessionData);
+    this.persistedOptions = mergedOptions;
   }
 
   /** Current state of the session */

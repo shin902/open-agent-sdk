@@ -174,7 +174,7 @@ function createProvider(options: {
   });
 }
 
-function isValidProviderOption(provider: string): provider is ProviderOption {
+function canNormalizeProvider(provider: string): provider is ProviderOption {
   return normalizeProvider(provider as ProviderOption) !== undefined;
 }
 
@@ -190,7 +190,7 @@ function toNamedProviderConfigs(
       ([, config]) =>
         typeof config?.model === 'string' &&
         typeof config?.provider === 'string' &&
-        isValidProviderOption(config.provider)
+        canNormalizeProvider(config.provider)
     )
     .map(([name, config]) => [
       name,
@@ -211,7 +211,7 @@ function toFallbackProviderConfigs(
     (config): config is FallbackProviderConfig =>
       typeof config?.model === 'string' &&
       typeof config?.provider === 'string' &&
-      isValidProviderOption(config.provider)
+      canNormalizeProvider(config.provider)
   );
 
   return entries.length > 0 ? entries : undefined;
@@ -596,6 +596,7 @@ export async function createSession(options: CreateSessionOptions): Promise<Sess
     ),
   };
 
+  session.initializePersistedOptions(sessionData.options);
   await storage.save(sessionData);
 
   return session;
@@ -861,6 +862,7 @@ export async function forkSession(
     forkedAt: forkTimestamp,
   };
 
+  session.initializePersistedOptions(forkedData.options);
   await storage.save(forkedData);
 
   return session;
