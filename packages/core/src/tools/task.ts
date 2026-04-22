@@ -173,6 +173,17 @@ export function createTaskToolFromConfig(
   agents: AgentDefinitions,
   sessionId: string,
   model: string,
+  maxTurns: number,
+  permissionMode: string,
+  hookManager: HookManager,
+  toolRegistry: ToolRegistry,
+  providers?: Record<string, LLMProvider>,
+  fallbackProviders?: string[]
+): TaskTool;
+export function createTaskToolFromConfig(
+  agents: AgentDefinitions,
+  sessionId: string,
+  model: string,
   providerName: string,
   maxTurns: number,
   permissionMode: string,
@@ -180,7 +191,45 @@ export function createTaskToolFromConfig(
   toolRegistry: ToolRegistry,
   providers?: Record<string, LLMProvider>,
   fallbackProviders?: string[]
+): TaskTool;
+export function createTaskToolFromConfig(
+  agents: AgentDefinitions,
+  sessionId: string,
+  model: string,
+  providerNameOrMaxTurns: string | number,
+  maxTurnsOrPermissionMode: number | string,
+  permissionModeOrHookManager: string | HookManager,
+  hookManagerOrToolRegistry: HookManager | ToolRegistry,
+  toolRegistryOrProviders?: ToolRegistry | Record<string, LLMProvider>,
+  providersOrFallbackProviders?: Record<string, LLMProvider> | string[],
+  fallbackProvidersArg?: string[]
 ): TaskTool {
+  let providerName: string;
+  let maxTurns: number;
+  let permissionMode: string;
+  let hookManager: HookManager;
+  let toolRegistry: ToolRegistry;
+  let providers: Record<string, LLMProvider> | undefined;
+  let fallbackProviders: string[] | undefined;
+
+  if (typeof providerNameOrMaxTurns === 'string') {
+    providerName = providerNameOrMaxTurns;
+    maxTurns = maxTurnsOrPermissionMode as number;
+    permissionMode = permissionModeOrHookManager as string;
+    hookManager = hookManagerOrToolRegistry as HookManager;
+    toolRegistry = toolRegistryOrProviders as ToolRegistry;
+    providers = providersOrFallbackProviders as Record<string, LLMProvider> | undefined;
+    fallbackProviders = fallbackProvidersArg;
+  } else {
+    maxTurns = providerNameOrMaxTurns;
+    permissionMode = maxTurnsOrPermissionMode as string;
+    hookManager = permissionModeOrHookManager as HookManager;
+    toolRegistry = hookManagerOrToolRegistry as ToolRegistry;
+    providers = toolRegistryOrProviders as Record<string, LLMProvider> | undefined;
+    fallbackProviders = providersOrFallbackProviders as string[] | undefined;
+    providerName = fallbackProviders?.[0] ?? Object.keys(providers ?? {})[0] ?? 'default';
+  }
+
   return new TaskTool({
     agents,
     sessionId,
