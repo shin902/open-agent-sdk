@@ -95,7 +95,7 @@ export interface SessionOptions {
  */
 export class Session {
   readonly id: string;
-  readonly model: string;
+  private _model: string;
   private _provider: string;
   readonly createdAt: number;
   readonly parentSessionId?: string;
@@ -114,7 +114,7 @@ export class Session {
 
   constructor(loop: ReActLoop, options: SessionOptions, storage?: SessionStorage) {
     this.id = options.id ?? generateUUID();
-    this.model = options.model;
+    this._model = options.model;
     this._provider = options.provider;
     this.createdAt = Date.now();
     this.updatedAt = this.createdAt;
@@ -137,6 +137,10 @@ export class Session {
     return this._provider;
   }
 
+  get model(): string {
+    return this._model;
+  }
+
   get currentProvider(): string {
     return this._provider;
   }
@@ -147,10 +151,7 @@ export class Session {
    */
   syncProviderFromLoop(providerName: string): void {
     this._provider = providerName;
-
-    const currentModel = (
-      this.loop as unknown as { getCurrentModel?: () => string | undefined }
-    ).getCurrentModel?.();
+    const currentModel = this.loop.getCurrentModel();
     if (typeof currentModel === 'string' && currentModel.length > 0) {
       this._model = currentModel;
     }
@@ -311,6 +312,13 @@ export class Session {
 
     this.updatedAt = Date.now();
 
+    const existingSession = await this.storage.load(this.id);
+    const mergedOptions = {
+      ...(existingSession?.options ?? {}),
+      model: this.model,
+      provider: this.provider,
+    };
+
     const sessionData: SessionData = {
       id: this.id,
       model: this.model,
@@ -318,10 +326,7 @@ export class Session {
       createdAt: this.createdAt,
       updatedAt: this.updatedAt,
       messages: [...this.messages],
-      options: {
-        model: this.model,
-        provider: this.provider,
-      },
+      options: mergedOptions,
       parentSessionId: this.parentSessionId,
       forkedAt: this.forkedAt,
     };

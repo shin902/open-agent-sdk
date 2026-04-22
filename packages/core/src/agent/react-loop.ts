@@ -256,6 +256,10 @@ export class ReActLoop {
     return this.providerName;
   }
 
+  getCurrentModel(): string {
+    return this.provider.getModel();
+  }
+
   getProviderNames(): string[] {
     return Array.from(this.providers.keys());
   }

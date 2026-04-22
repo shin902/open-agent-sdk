@@ -301,10 +301,12 @@ describe('Session Unit Tests', () => {
       expect(session.currentProvider).toBe('fast');
       session.switchProvider('smart');
       expect(session.currentProvider).toBe('smart');
+      expect(session.model).toBe('smart-model');
 
       await session.send('hello');
       session.switchProvider('fast');
       expect(session.currentProvider).toBe('fast');
+      expect(session.model).toBe('fast-model');
 
       await session.close();
     });
@@ -394,9 +396,12 @@ describe('Session Unit Tests', () => {
 
       expect(session.currentProvider).toBe('backup');
       expect(session.provider).toBe('backup');
+      expect(session.model).toBe('backup-model');
 
       const saved = await storage.load(session.id);
       expect(saved?.provider).toBe('backup');
+      expect(saved?.model).toBe('backup-model');
+      expect(saved?.options.model).toBe('backup-model');
 
       await session.close();
     });

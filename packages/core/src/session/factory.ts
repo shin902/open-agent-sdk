@@ -174,16 +174,47 @@ function createProvider(options: {
   });
 }
 
-function resolveProviderTypeFromNameAndModel(
-  providerName: string | undefined,
-  model: string
-): ProviderType {
-  const normalized = normalizeProvider(providerName as ProviderOption | undefined);
-  if (normalized) {
-    return normalized;
+function isProviderOption(provider: string): provider is ProviderOption {
+  return normalizeProvider(provider as ProviderOption) !== undefined;
+}
+
+function toNamedProviderConfigs(
+  providers?: Record<string, { provider: string; model: string }>
+): Record<string, NamedProviderConfig> | undefined {
+  if (!providers) {
+    return undefined;
   }
 
-  return detectProvider({ model });
+  const entries = Object.entries(providers)
+    .filter(
+      ([, config]) =>
+        typeof config?.model === 'string' &&
+        typeof config?.provider === 'string' &&
+        isProviderOption(config.provider)
+    )
+    .map(([name, config]) => [
+      name,
+      { provider: config.provider as ProviderOption, model: config.model },
+    ] as const);
+
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+function toFallbackProviderConfigs(
+  fallbackProviders?: Array<{ name?: string; provider: string; model: string }>
+): FallbackProviderConfig[] | undefined {
+  if (!fallbackProviders) {
+    return undefined;
+  }
+
+  const entries = fallbackProviders.filter(
+    (config): config is FallbackProviderConfig =>
+      typeof config?.model === 'string' &&
+      typeof config?.provider === 'string' &&
+      isProviderOption(config.provider)
+  );
+
+  return entries.length > 0 ? entries : undefined;
 }
 
 function createNamedProvider(params: {
@@ -616,28 +647,13 @@ export async function resumeSession(
     throw new Error(`Session with ID "${sessionId}" not found in storage.`);
   }
 
-  // Get API key (use override or from options, or env var)
-  const providerType = resolveProviderTypeFromNameAndModel(
-    sessionData.options.provider,
-    sessionData.model
-  );
-  const apiKey = resolveApiKey(
-    providerType,
-    options?.apiKey ?? sessionData.options.apiKey
-  );
-
-  if (!apiKey && providerType !== 'codex') {
-    const keyName = providerType === 'google' ? 'GEMINI_API_KEY' :
-                    providerType === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY';
-    throw new Error(
-      `${providerType} API key is required. Provide it via options.apiKey, saved session options, or ${keyName} environment variable.`
-    );
-  }
-
-  const provider = createProvider({
-    providerType,
-    apiKey,
+  const resolvedProviderSet = resolveProviderSet({
     model: sessionData.model,
+    provider: sessionData.options.provider as ProviderOption | undefined,
+    providers: toNamedProviderConfigs(sessionData.options.providers),
+    defaultProvider: sessionData.options.defaultProvider,
+    fallbackProviders: toFallbackProviderConfigs(sessionData.options.fallbackProviders),
+    apiKey: options?.apiKey ?? sessionData.options.apiKey,
     baseURL: sessionData.options.baseURL,
     codexOAuth: options?.codexOAuth ?? sessionData.options.codexOAuth,
   });
@@ -649,59 +665,15 @@ export async function resumeSession(
   const skillRegistry = createSkillRegistry();
   await skillRegistry.loadAll();
 
-  const logicalProviderName = sessionData.provider || providerType;
+  const logicalProviderName = resolvedProviderSet.providers.has(sessionData.provider)
+    ? sessionData.provider
+    : resolvedProviderSet.primaryName;
+  const provider = resolvedProviderSet.providers.get(logicalProviderName);
+  if (!provider) {
+    throw new Error(`Provider "${logicalProviderName}" is not available for resumed session.`);
+  }
 
   let sessionRef: Session | undefined;
-
-  const restoredProviders = new Map<string, typeof provider>();
-  const savedProviders = options?.providers ?? sessionData.options.providers;
-
-  const addSavedProviders = (providersValue: unknown) => {
-    if (!providersValue) return;
-
-    if (providersValue instanceof Map) {
-      for (const [providerName, providerInstance] of providersValue.entries()) {
-        if (typeof providerName === 'string' && providerInstance) {
-          restoredProviders.set(providerName, providerInstance as typeof provider);
-        }
-      }
-      return;
-    }
-
-    if (Array.isArray(providersValue)) {
-      for (const entry of providersValue) {
-        if (
-          Array.isArray(entry) &&
-          entry.length >= 2 &&
-          typeof entry[0] === 'string' &&
-          entry[1]
-        ) {
-          restoredProviders.set(entry[0], entry[1] as typeof provider);
-        }
-      }
-      return;
-    }
-
-    if (typeof providersValue === 'object') {
-      for (const [providerName, providerInstance] of Object.entries(providersValue as Record<string, unknown>)) {
-        if (providerInstance) {
-          restoredProviders.set(providerName, providerInstance as typeof provider);
-        }
-      }
-    }
-  };
-
-  addSavedProviders(savedProviders);
-  restoredProviders.set(logicalProviderName, provider);
-
-  const savedFallbackProviders = options?.fallbackProviders ?? sessionData.options.fallbackProviders;
-  const savedDefaultProvider = options?.defaultProvider ?? sessionData.options.defaultProvider;
-  const switchableProviders = Array.from(new Set([
-    ...restoredProviders.keys(),
-    ...(Array.isArray(savedFallbackProviders) ? savedFallbackProviders : []),
-    savedDefaultProvider,
-    logicalProviderName,
-  ].filter((providerName): providerName is string => typeof providerName === 'string' && providerName.length > 0)));
 
   // Create ReAct loop with saved options, overridden by new options
   // Pass the existing session ID so all messages share the same session_id
@@ -719,8 +691,9 @@ export async function resumeSession(
     skillRegistry,
     outputFormat: sessionData.options.outputFormat,
     providerName: logicalProviderName,
-    providers: restoredProviders,
-    switchableProviders,
+    providers: resolvedProviderSet.providers,
+    switchableProviders: resolvedProviderSet.switchableProviderNames,
+    fallbackProviders: resolvedProviderSet.fallbackProviderNames,
     onProviderChange: (providerName) => {
       sessionRef?.syncProviderFromLoop(providerName);
     },
@@ -787,34 +760,31 @@ export async function forkSession(
   }
 
   // Determine provider and model (allow overrides)
-  const sourceLogicalProvider = sourceData.provider || resolveProviderTypeFromNameAndModel(sourceData.options.provider, sourceData.model);
-  const providerType = options.provider
-    ? (normalizeProvider(options.provider) ?? detectProvider({ model: options.model ?? sourceData.model, provider: options.provider }))
-    : resolveProviderTypeFromNameAndModel(sourceData.options.provider, sourceData.model);
-  const logicalProviderName = options.provider ? providerType : sourceLogicalProvider;
   const model = options.model ?? sourceData.model;
-
-  // Get API key (use override, saved options, or env var)
-  const apiKey = resolveApiKey(
-    providerType,
-    options.apiKey ?? sourceData.options.apiKey
-  );
-
-  if (!apiKey && providerType !== 'codex') {
-    const keyName = providerType === 'google' ? 'GEMINI_API_KEY' :
-                    providerType === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY';
-    throw new Error(
-      `${providerType} API key is required. Provide it via options.apiKey, saved session options, or ${keyName} environment variable.`
-    );
-  }
-
-  const provider = createProvider({
-    providerType,
-    apiKey,
+  const resolvedProviderSet = resolveProviderSet({
     model,
+    provider: options.provider ?? (sourceData.options.provider as ProviderOption | undefined),
+    providers: options.provider ? undefined : toNamedProviderConfigs(sourceData.options.providers),
+    defaultProvider: options.provider
+      ? undefined
+      : (sourceData.options.defaultProvider ?? sourceData.provider),
+    fallbackProviders: options.provider
+      ? undefined
+      : toFallbackProviderConfigs(sourceData.options.fallbackProviders),
+    apiKey: options.apiKey ?? sourceData.options.apiKey,
     baseURL: sourceData.options.baseURL,
     codexOAuth: options.codexOAuth ?? sourceData.options.codexOAuth,
   });
+
+  const logicalProviderName = options.provider
+    ? resolvedProviderSet.primaryName
+    : (resolvedProviderSet.providers.has(sourceData.provider)
+      ? sourceData.provider
+      : resolvedProviderSet.primaryName);
+  const provider = resolvedProviderSet.providers.get(logicalProviderName);
+  if (!provider) {
+    throw new Error(`Provider "${logicalProviderName}" is not available for forked session.`);
+  }
 
   // Create tool registry with default tools
   const toolRegistry = createDefaultRegistry();
@@ -828,21 +798,6 @@ export async function forkSession(
   const forkTimestamp = Date.now();
 
   let sessionRef: Session | undefined;
-
-  const forkProviders = sourceData.options.providers
-    ? new Map(sourceData.options.providers)
-    : new Map([[logicalProviderName, provider]]);
-  forkProviders.set(logicalProviderName, provider);
-
-  const forkSwitchableProviders = sourceData.options.fallbackProviders
-    ? [
-        logicalProviderName,
-        ...sourceData.options.fallbackProviders.filter(
-          (providerName) =>
-            providerName !== logicalProviderName && forkProviders.has(providerName)
-        ),
-      ]
-    : Array.from(forkProviders.keys());
 
   // Create ReAct loop with inherited options, overridden by new options
   const loop = new ReActLoop(provider, toolRegistry, {
@@ -858,8 +813,9 @@ export async function forkSession(
     hooks: options.hooks ?? sourceData.options.hooks,
     skillRegistry,
     providerName: logicalProviderName,
-    providers: forkProviders,
-    switchableProviders: forkSwitchableProviders,
+    providers: resolvedProviderSet.providers,
+    switchableProviders: resolvedProviderSet.switchableProviderNames,
+    fallbackProviders: resolvedProviderSet.fallbackProviderNames,
     onProviderChange: (providerName) => {
       sessionRef?.syncProviderFromLoop(providerName);
     },
