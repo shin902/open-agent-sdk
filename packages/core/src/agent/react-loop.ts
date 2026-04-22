@@ -204,12 +204,17 @@ export class ReActLoop {
   }
 
   private buildToolContext(): ToolContext {
+    const providers = Object.create(null) as Record<string, LLMProvider>;
+    for (const [name, provider] of this.providers.entries()) {
+      providers[name] = provider;
+    }
+
     return {
       cwd: this.config.cwd!,
       env: this.config.env!,
       abortController: this.config.abortController,
       provider: this.provider,
-      providers: Object.fromEntries(this.providers.entries()),
+      providers,
       currentProviderName: this.providerName,
       model: this.provider.getModel(),
     };
