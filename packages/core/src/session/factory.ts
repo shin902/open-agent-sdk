@@ -10,6 +10,25 @@ import { CodexProvider } from '../providers/codex';
 import { createDefaultRegistry } from '../tools/registry';
 
 /**
+ * Build the persisted session options object.
+ * Preserve the full original options shape so resume/fork continues to have
+ * access to multi-provider configuration and any additional provider options.
+ * Canonical persisted values for model/provider are still sourced from the
+ * resolved session state.
+ */
+function buildPersistedSessionOptions<T extends Record<string, unknown>>(
+  resolvedModel: string,
+  provider: string,
+  options: T
+): T & { model: string; provider: string } {
+  return {
+    ...options,
+    model: resolvedModel,
+    provider,
+  };
+}
+
+/**
  * Check if a base URL requires Bearer token authentication instead of x-api-key
  * @param baseURL - The API base URL
  * @returns true if Bearer auth is required (e.g., MiniMax)
@@ -539,26 +558,11 @@ export async function createSession(options: CreateSessionOptions): Promise<Sess
     createdAt: session.createdAt,
     updatedAt: Date.now(),
     messages: [],
-    options: {
-      model: resolvedModel,
-      provider: session.provider,
-      apiKey: options.apiKey,
-      providers: options.providers,
-      defaultProvider: options.defaultProvider,
-      fallbackProviders: options.fallbackProviders,
-      codexOAuth: options.codexOAuth,
-      maxTurns: options.maxTurns,
-      allowedTools: options.allowedTools,
-      systemPrompt: options.systemPrompt,
-      cwd: options.cwd,
-      env: options.env,
-      permissionMode: options.permissionMode,
-      allowDangerouslySkipPermissions: options.allowDangerouslySkipPermissions,
-      mcpServers: options.mcpServers,
-      hooks: options.hooks,
-      outputFormat: options.outputFormat,
-      enableFileCheckpointing: options.enableFileCheckpointing,
-    },
+    options: buildPersistedSessionOptions(
+      resolvedModel,
+      session.provider,
+      options as Record<string, unknown>
+    ),
   };
 
   await storage.save(sessionData);
