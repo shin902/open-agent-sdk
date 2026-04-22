@@ -10,6 +10,7 @@ import { ReActLoop, type ReActLoopConfig } from './react-loop';
 import { HookManager } from '../hooks/manager';
 import { createSubagentStartInput, createSubagentStopInput } from '../hooks/inputs';
 import { logger } from '../utils/logger';
+import type { LLMProvider } from '../providers/base';
 
 /**
  * Result from subagent execution
@@ -47,9 +48,12 @@ export interface SubagentContext {
   /** Parent's configuration values to inherit from */
   parentConfig: {
     model: string;
+    providerName: string;
     maxTurns: number;
     permissionMode: string;
     allowedTools?: string[];
+    providers?: Record<string, LLMProvider>;
+    fallbackProviders?: string[];
   };
 }
 
@@ -86,6 +90,46 @@ function getEffectiveModel(agentDef: AgentDefinition, parentModel: string): stri
     return parentModel;
   }
   return agentDef.model;
+}
+
+function resolveSubagentProvider(
+  agentDef: AgentDefinition,
+  context: SubagentContext
+): { providerName: string; provider: LLMProvider } {
+  if (agentDef.providerName) {
+    const namedProviders = context.parentConfig.providers;
+    if (!namedProviders) {
+      throw new Error(
+        `providerName \"${agentDef.providerName}\" requires parent session providers map, but it is not configured.`
+      );
+    }
+
+    const namedProvider = namedProviders[agentDef.providerName];
+    if (!namedProvider) {
+      throw new Error(`providerName \"${agentDef.providerName}\" is not configured in parent session.`);
+    }
+
+    return {
+      providerName: agentDef.providerName,
+      provider: namedProvider,
+    };
+  }
+
+  if (context.parentConfig.providers && context.parentConfig.providers[context.parentConfig.providerName]) {
+    return {
+      providerName: context.parentConfig.providerName,
+      provider: context.parentConfig.providers[context.parentConfig.providerName],
+    };
+  }
+
+  if (!context.parentContext.provider) {
+    throw new Error('Provider not available in parent context');
+  }
+
+  return {
+    providerName: context.parentConfig.providerName,
+    provider: context.parentContext.provider,
+  };
 }
 
 /**
@@ -144,18 +188,22 @@ export async function runSubagent(
     await context.hookManager.emit('SubagentStart', subagentStartInput, undefined);
 
     // Get effective configuration
-    const effectiveModel = getEffectiveModel(agentDef, context.parentConfig.model);
     const effectiveMaxTurns = getEffectiveMaxTurns(agentDef, context.parentConfig.maxTurns);
     const effectivePermissionMode = getEffectivePermissionMode(
       agentDef,
       context.parentConfig.permissionMode
     );
+    const resolvedProvider = resolveSubagentProvider(agentDef, context);
+    const effectiveModel = agentDef.providerName
+      ? resolvedProvider.provider.getModel()
+      : getEffectiveModel(agentDef, context.parentConfig.model);
 
     // Get allowed tools
     const allowedTools = getAllowedTools(agentDef, context.parentToolRegistry);
 
     logger.debug(`[SubagentRunner] Subagent ${agentId} config:`, {
       model: effectiveModel,
+      providerName: resolvedProvider.providerName,
       maxTurns: effectiveMaxTurns,
       permissionMode: effectivePermissionMode,
       toolCount: allowedTools.length,
@@ -170,18 +218,18 @@ export async function runSubagent(
       env: context.parentContext.env,
       abortController: context.parentContext.abortController,
       permissionMode: effectivePermissionMode as any,
+      providerName: resolvedProvider.providerName,
+      providers: context.parentConfig.providers
+        ? new Map(Object.entries(context.parentConfig.providers))
+        : undefined,
+      fallbackProviders: context.parentConfig.fallbackProviders,
+      switchableProviders: [resolvedProvider.providerName],
       // Subagent has its own hooks (not inherited from parent)
       hooks: new HookManager(),
     };
 
-    // Create and run the subagent
-    // Note: We need a provider instance. If parent's context has one, use it.
-    if (!context.parentContext.provider) {
-      throw new Error('Provider not available in parent context');
-    }
-
     const subagent = new ReActLoop(
-      context.parentContext.provider,
+      resolvedProvider.provider,
       // Create a new tool registry with filtered tools
       // This is a simplified approach - in reality we might need to create a new registry
       context.parentToolRegistry,
@@ -206,8 +254,7 @@ export async function runSubagent(
     await context.hookManager.emit('SubagentStop', subagentStopInput, undefined);
 
     // Calculate cost if provider supports it
-    const provider = context.parentContext.provider;
-    const costUsd = provider.getCost?.({
+    const costUsd = resolvedProvider.provider.getCost?.({
       input_tokens: result.usage.input_tokens,
       output_tokens: result.usage.output_tokens,
     });
