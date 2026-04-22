@@ -34,6 +34,8 @@ export interface ToolContext {
   providers?: Record<string, LLMProvider>;
   /** Logical name of the currently active provider */
   currentProviderName?: string;
+  /** Fallback provider names in retry order */
+  fallbackProviders?: string[];
   /** Model identifier for LLM operations */
   model?: string;
 }

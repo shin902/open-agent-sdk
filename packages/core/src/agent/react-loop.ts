@@ -216,6 +216,7 @@ export class ReActLoop {
       provider: this.provider,
       providers,
       currentProviderName: this.providerName,
+      fallbackProviders: this.fallbackProviders,
       model: this.provider.getModel(),
     };
   }
