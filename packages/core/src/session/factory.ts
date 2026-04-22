@@ -829,6 +829,21 @@ export async function forkSession(
 
   let sessionRef: Session | undefined;
 
+  const forkProviders = sourceData.options.providers
+    ? new Map(sourceData.options.providers)
+    : new Map([[logicalProviderName, provider]]);
+  forkProviders.set(logicalProviderName, provider);
+
+  const forkSwitchableProviders = sourceData.options.fallbackProviders
+    ? [
+        logicalProviderName,
+        ...sourceData.options.fallbackProviders.filter(
+          (providerName) =>
+            providerName !== logicalProviderName && forkProviders.has(providerName)
+        ),
+      ]
+    : Array.from(forkProviders.keys());
+
   // Create ReAct loop with inherited options, overridden by new options
   const loop = new ReActLoop(provider, toolRegistry, {
     maxTurns: sourceData.options.maxTurns ?? 10,
@@ -843,8 +858,8 @@ export async function forkSession(
     hooks: options.hooks ?? sourceData.options.hooks,
     skillRegistry,
     providerName: logicalProviderName,
-    providers: new Map([[logicalProviderName, provider]]),
-    switchableProviders: [logicalProviderName],
+    providers: forkProviders,
+    switchableProviders: forkSwitchableProviders,
     onProviderChange: (providerName) => {
       sessionRef?.syncProviderFromLoop(providerName);
     },
