@@ -173,6 +173,31 @@ describe('AgentDefinition', () => {
         expect(result.success).toBe(true);
       }
     });
+
+    it('应处理providerName字段', () => {
+      const withProviderName = {
+        description: 'Test agent',
+        prompt: 'Test...',
+        providerName: 'fast',
+      };
+
+      const result = AgentDefinitionSchema.safeParse(withProviderName);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.providerName).toBe('fast');
+      }
+    });
+
+    it('应在providerName为空字符串时验证失败', () => {
+      const invalid = {
+        description: 'Test agent',
+        prompt: 'Test...',
+        providerName: '',
+      };
+
+      const result = AgentDefinitionSchema.safeParse(invalid);
+      expect(result.success).toBe(false);
+    });
   });
 
   describe('complex scenarios', () => {
@@ -182,6 +207,7 @@ describe('AgentDefinition', () => {
         tools: ['Read', 'Grep', 'Glob'],
         prompt: 'You are an expert TypeScript code reviewer...',
         model: 'sonnet',
+        providerName: 'smart',
         maxTurns: 15,
         permissionMode: 'acceptEdits',
       };
@@ -193,6 +219,7 @@ describe('AgentDefinition', () => {
         expect(result.data.tools).toEqual(fullDefinition.tools);
         expect(result.data.prompt).toBe(fullDefinition.prompt);
         expect(result.data.model).toBe(fullDefinition.model);
+        expect(result.data.providerName).toBe(fullDefinition.providerName);
         expect(result.data.maxTurns).toBe(fullDefinition.maxTurns);
         expect(result.data.permissionMode).toBe(fullDefinition.permissionMode);
       }
@@ -209,6 +236,7 @@ describe('AgentDefinition', () => {
       if (result.success) {
         expect(result.data.tools).toBeUndefined();
         expect(result.data.model).toBeUndefined();
+        expect(result.data.providerName).toBeUndefined();
         expect(result.data.maxTurns).toBeUndefined();
         expect(result.data.permissionMode).toBeUndefined();
       }

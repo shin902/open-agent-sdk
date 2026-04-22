@@ -43,6 +43,21 @@ class MockProvider extends LLMProvider {
   }
 }
 
+class FailBeforeContentProvider extends LLMProvider {
+  constructor() {
+    super({ apiKey: 'test', model: 'failing-model' });
+  }
+
+  async *chat(
+    _messages: SDKMessage[],
+    _tools?: ToolDefinition[],
+    _signal?: AbortSignal,
+    _options?: ChatOptions
+  ): AsyncIterable<LLMChunk> {
+    throw new Error('provider failed before content');
+  }
+}
+
 describe('ReActLoop with system prompt', () => {
   let mockProvider: MockProvider;
   let toolRegistry: ToolRegistry;
@@ -149,5 +164,73 @@ describe('ReActLoop with system prompt', () => {
     expect(hasSystemInSecondTurn).toBe(true);
     // System instruction is still passed via options
     expect(mockProvider.lastOptions?.systemInstruction).toBe(systemPrompt);
+  });
+
+  it('should update system provider metadata after switchProvider', async () => {
+    const fastProvider = new MockProvider();
+    const smartProvider = new MockProvider();
+    const loop = new ReActLoop(
+      fastProvider,
+      toolRegistry,
+      {
+        maxTurns: 1,
+        systemPrompt: 'You are a helpful assistant',
+        providerName: 'fast',
+        providers: new Map([
+          ['fast', fastProvider],
+          ['smart', smartProvider],
+        ]),
+        switchableProviders: ['fast', 'smart'],
+      },
+      'test-session'
+    );
+
+    const firstTurn = loop.runStream('First message');
+    await firstTurn.next();
+    const firstHistory = [...fastProvider.lastMessages];
+
+    loop.switchProvider('smart');
+
+    const secondTurn = loop.runStream('Second message', firstHistory);
+    await secondTurn.next();
+
+    const systemMessage = smartProvider.lastMessages[0] as { type: string; provider?: string };
+    expect(systemMessage.type).toBe('system');
+    expect(systemMessage.provider).toBe('smart');
+    expect(loop.getCurrentProviderName()).toBe('smart');
+  });
+
+  it('should use updated provider metadata on the turn after fallback', async () => {
+    const failingProvider = new FailBeforeContentProvider();
+    const backupProvider = new MockProvider();
+    const loop = new ReActLoop(
+      failingProvider,
+      toolRegistry,
+      {
+        maxTurns: 1,
+        systemPrompt: 'You are a helpful assistant',
+        providerName: 'fast',
+        providers: new Map([
+          ['fast', failingProvider],
+          ['backup', backupProvider],
+        ]),
+        switchableProviders: ['fast'],
+        fallbackProviders: ['backup'],
+      },
+      'test-session'
+    );
+
+    const firstTurn = loop.runStream('First message');
+    for await (const _event of firstTurn) {}
+    const firstHistory = [...backupProvider.lastMessages];
+
+    expect(loop.getCurrentProviderName()).toBe('backup');
+
+    const secondTurn = loop.runStream('Second message', firstHistory);
+    await secondTurn.next();
+
+    const systemMessage = backupProvider.lastMessages[0] as { type: string; provider?: string };
+    expect(systemMessage.type).toBe('system');
+    expect(systemMessage.provider).toBe('backup');
   });
 });

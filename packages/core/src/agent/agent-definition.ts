@@ -33,6 +33,9 @@ export const AgentDefinitionSchema = z.object({
   /** Model to use ('inherit' or omit to use parent's model) */
   model: z.enum(['sonnet', 'opus', 'haiku', 'inherit']).optional(),
 
+  /** Logical provider name from parent session providers map */
+  providerName: z.string().min(1).optional(),
+
   /** Maximum turns for the agent (omit to use parent's maxTurns) */
   maxTurns: z.number().int().positive().optional(),
 

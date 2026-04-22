@@ -58,6 +58,30 @@ class MockProvider extends LLMProvider {
   }
 }
 
+class ChunkProvider extends LLMProvider {
+  private readonly chunks: LLMChunk[];
+  private readonly startError?: string;
+
+  constructor(options: { model: string; chunks?: LLMChunk[]; startError?: string }) {
+    super({ apiKey: 'test', model: options.model });
+    this.chunks = options.chunks ?? [{ type: 'done' }];
+    this.startError = options.startError;
+  }
+
+  async *chat(
+    messages: SDKMessage[],
+    tools?: ToolDefinition[]
+  ): AsyncIterable<LLMChunk> {
+    if (this.startError) {
+      throw new Error(this.startError);
+    }
+
+    for (const chunk of this.chunks) {
+      yield chunk;
+    }
+  }
+}
+
 function createTestSession(): { session: Session; mockProvider: MockProvider; registry: ToolRegistry } {
   const registry = new ToolRegistry();
   const mockProvider = new MockProvider({ apiKey: 'test', model: 'test' });
@@ -136,6 +160,72 @@ describe('Session Unit Tests', () => {
         if (originalGeminiKey) process.env.GEMINI_API_KEY = originalGeminiKey;
       }
     });
+
+    it('should throw when providers map is empty', async () => {
+      await expect(
+        createSession({
+          providers: {},
+          apiKey: 'test-api-key',
+        })
+      ).rejects.toThrow('providers must contain at least one provider definition');
+    });
+
+    it('should throw when defaultProvider is not found in providers map', async () => {
+      await expect(
+        createSession({
+          providers: {
+            fast: { provider: 'openai', model: 'gpt-4o' },
+          },
+          defaultProvider: 'smart',
+          apiKey: 'test-api-key',
+        })
+      ).rejects.toThrow('defaultProvider "smart" was not found in providers');
+    });
+
+    it('should prioritize providers map over top-level model/provider', async () => {
+      const session = await createSession({
+        model: 'gpt-4.1',
+        provider: 'openai',
+        providers: {
+          fast: { provider: 'google', model: 'gemini-2.0-flash' },
+        },
+        apiKey: 'test-api-key',
+      });
+
+      expect(session.provider).toBe('fast');
+      expect(session.model).toBe('gemini-2.0-flash');
+
+      await session.close();
+    });
+
+    it('should use the first providers key when defaultProvider is omitted', async () => {
+      const session = await createSession({
+        providers: {
+          fast: { provider: 'openai', model: 'gpt-4o-mini' },
+          smart: { provider: 'anthropic', model: 'claude-3-5-sonnet-latest' },
+        },
+        apiKey: 'test-api-key',
+      });
+
+      expect(session.provider).toBe('fast');
+      expect(session.model).toBe('gpt-4o-mini');
+
+      await session.close();
+    });
+
+    it('should allow createSession without top-level model when providers is configured', async () => {
+      const session = await createSession({
+        providers: {
+          fast: { provider: 'openai', model: 'gpt-4o-mini' },
+        },
+        apiKey: 'test-api-key',
+      });
+
+      expect(session.provider).toBe('fast');
+      expect(session.model).toBe('gpt-4o-mini');
+
+      await session.close();
+    });
   });
 
   describe('Session State Management', () => {
@@ -189,6 +279,126 @@ describe('Session Unit Tests', () => {
 
       for await (const _ of stream) {}
       expect(session.state).toBe(SessionState.IDLE);
+    });
+
+    it('should switch provider in idle and ready states', async () => {
+      const registry = new ToolRegistry();
+      const fastProvider = new ChunkProvider({ model: 'fast-model', chunks: [{ type: 'content', delta: 'fast' }, { type: 'done' }] });
+      const smartProvider = new ChunkProvider({ model: 'smart-model', chunks: [{ type: 'content', delta: 'smart' }, { type: 'done' }] });
+
+      const loop = new ReActLoop(fastProvider, registry, {
+        maxTurns: 1,
+        providerName: 'fast',
+        providers: new Map([
+          ['fast', fastProvider],
+          ['smart', smartProvider],
+        ]),
+        switchableProviders: ['fast', 'smart'],
+      });
+
+      const session = new Session(loop, { model: 'fast-model', provider: 'fast' });
+
+      expect(session.currentProvider).toBe('fast');
+      session.switchProvider('smart');
+      expect(session.currentProvider).toBe('smart');
+
+      await session.send('hello');
+      session.switchProvider('fast');
+      expect(session.currentProvider).toBe('fast');
+
+      await session.close();
+    });
+
+    it('should reject switchProvider while running', async () => {
+      const registry = new ToolRegistry();
+      const fastProvider = new ChunkProvider({ model: 'fast-model', chunks: [{ type: 'content', delta: 'fast' }, { type: 'done' }] });
+      const smartProvider = new ChunkProvider({ model: 'smart-model', chunks: [{ type: 'content', delta: 'smart' }, { type: 'done' }] });
+
+      const loop = new ReActLoop(fastProvider, registry, {
+        maxTurns: 1,
+        providerName: 'fast',
+        providers: new Map([
+          ['fast', fastProvider],
+          ['smart', smartProvider],
+        ]),
+        switchableProviders: ['fast', 'smart'],
+      });
+
+      const session = new Session(loop, { model: 'fast-model', provider: 'fast' });
+      await session.send('hello');
+
+      const stream = session.stream();
+      await stream.next();
+
+      expect(() => session.switchProvider('smart')).toThrow('idle or ready');
+
+      for await (const _ of stream) {}
+      await session.close();
+    });
+
+    it('should reject switchProvider for unknown provider names', () => {
+      const registry = new ToolRegistry();
+      const fastProvider = new ChunkProvider({ model: 'fast-model' });
+      const smartProvider = new ChunkProvider({ model: 'smart-model' });
+
+      const loop = new ReActLoop(fastProvider, registry, {
+        maxTurns: 1,
+        providerName: 'fast',
+        providers: new Map([
+          ['fast', fastProvider],
+          ['smart', smartProvider],
+        ]),
+        switchableProviders: ['fast', 'smart'],
+      });
+
+      const session = new Session(loop, { model: 'fast-model', provider: 'fast' });
+
+      expect(() => session.switchProvider('missing')).toThrow('not configured');
+    });
+
+    it('should update current provider after fallback and persist logical name', async () => {
+      const registry = new ToolRegistry();
+      const storage = new InMemoryStorage();
+      const fastProvider = new ChunkProvider({ model: 'fast-model', startError: 'primary failed' });
+      const backupProvider = new ChunkProvider({
+        model: 'backup-model',
+        chunks: [
+          { type: 'content', delta: 'backup answer' },
+          { type: 'usage', usage: { input_tokens: 1, output_tokens: 1 } },
+          { type: 'done' },
+        ],
+      });
+
+      let sessionRef: Session | undefined;
+      const loop = new ReActLoop(fastProvider, registry, {
+        maxTurns: 1,
+        systemPrompt: 'test prompt',
+        providerName: 'fast',
+        providers: new Map([
+          ['fast', fastProvider],
+          ['backup', backupProvider],
+        ]),
+        switchableProviders: ['fast'],
+        fallbackProviders: ['backup'],
+        onProviderChange: (name) => sessionRef?.syncProviderFromLoop(name),
+      });
+
+      const session = new Session(loop, {
+        model: 'fast-model',
+        provider: 'fast',
+      }, storage);
+      sessionRef = session;
+
+      await session.send('hello');
+      for await (const _ of session.stream()) {}
+
+      expect(session.currentProvider).toBe('backup');
+      expect(session.provider).toBe('backup');
+
+      const saved = await storage.load(session.id);
+      expect(saved?.provider).toBe('backup');
+
+      await session.close();
     });
   });
 
