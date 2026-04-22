@@ -174,23 +174,23 @@ function createProvider(options: {
   });
 }
 
-function isProviderOption(provider: string): provider is ProviderOption {
+function isValidProviderOption(provider: string): provider is ProviderOption {
   return normalizeProvider(provider as ProviderOption) !== undefined;
 }
 
 function toNamedProviderConfigs(
-  providers?: Record<string, { provider: string; model: string }>
+  rawProviders?: Record<string, { provider: string; model: string }>
 ): Record<string, NamedProviderConfig> | undefined {
-  if (!providers) {
+  if (!rawProviders) {
     return undefined;
   }
 
-  const entries = Object.entries(providers)
+  const entries = Object.entries(rawProviders)
     .filter(
       ([, config]) =>
         typeof config?.model === 'string' &&
         typeof config?.provider === 'string' &&
-        isProviderOption(config.provider)
+        isValidProviderOption(config.provider)
     )
     .map(([name, config]) => [
       name,
@@ -201,17 +201,17 @@ function toNamedProviderConfigs(
 }
 
 function toFallbackProviderConfigs(
-  fallbackProviders?: Array<{ name?: string; provider: string; model: string }>
+  rawFallbackProviders?: Array<{ name?: string; provider: string; model: string }>
 ): FallbackProviderConfig[] | undefined {
-  if (!fallbackProviders) {
+  if (!rawFallbackProviders) {
     return undefined;
   }
 
-  const entries = fallbackProviders.filter(
+  const entries = rawFallbackProviders.filter(
     (config): config is FallbackProviderConfig =>
       typeof config?.model === 'string' &&
       typeof config?.provider === 'string' &&
-      isProviderOption(config.provider)
+      isValidProviderOption(config.provider)
   );
 
   return entries.length > 0 ? entries : undefined;
