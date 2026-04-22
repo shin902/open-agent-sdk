@@ -147,6 +147,13 @@ export class Session {
    */
   syncProviderFromLoop(providerName: string): void {
     this._provider = providerName;
+
+    const currentModel = (
+      this.loop as unknown as { getCurrentModel?: () => string | undefined }
+    ).getCurrentModel?.();
+    if (typeof currentModel === 'string' && currentModel.length > 0) {
+      this._model = currentModel;
+    }
   }
 
   /**
@@ -163,7 +170,7 @@ export class Session {
     }
 
     this.loop.switchProvider(name);
-    this._provider = this.loop.getCurrentProviderName();
+    this.syncProviderFromLoop(this.loop.getCurrentProviderName());
   }
 
   /**
